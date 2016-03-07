@@ -1,0 +1,20 @@
+// MyScan Config
+
+address = ""
+port = 8080;
+threads = 4;
+update_period = 360; // sec
+timeout_connect = 10;
+timeout_data = 30;
+
+tables = ( 
+	{
+		name = "user";
+		select = "user.*";
+		where = "user.state=1 AND is_agent=1";
+		groupby = "user.id";
+		indexes = (
+			{ name = "updated"; columns = "tm_updated DESC"; }
+		);
+	}
+);
