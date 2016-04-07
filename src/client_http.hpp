@@ -8,6 +8,8 @@
 #include <map>
 #include <random>
 
+/* WEB CLIENT IS BASED ON https://github.com/eidheim/Simple-Web-Server */
+
 namespace SimpleWeb {
     template <class socket_type>
     class ClientBase {

@@ -22,12 +22,12 @@ ColumnCondition::ColumnCondition(const ptree::value_type &pt, const Table& table
 	if (! colName.size()) throw runtime_error("empty column provided");
 
 	if (oper == OperType::Compare) {
-		if (endsWith(colName, ">")) {compare = CompareType::GT; colName.pop_back();}
-		else if (endsWith(colName, "<")) {compare = CompareType::LT; colName.pop_back();}
-		else if (endsWith(colName, ">=")) {compare = CompareType::GE; colName.pop_back(); colName.pop_back();}
+		if (endsWith(colName, ">=")) {compare = CompareType::GE; colName.pop_back(); colName.pop_back();}
 		else if (endsWith(colName, "<=")) {compare = CompareType::LE; colName.pop_back(); colName.pop_back();}
 		else if (endsWith(colName, "<>")) {compare = CompareType::NE; colName.pop_back(); colName.pop_back();}
 		else if (endsWith(colName, "!=")) {compare = CompareType::NE; colName.pop_back(); colName.pop_back();}
+		else if (endsWith(colName, ">")) {compare = CompareType::GT; colName.pop_back();}
+		else if (endsWith(colName, "<")) {compare = CompareType::LT; colName.pop_back();}
 		else compare = CompareType::EQ;
 		colName = trim(colName);
 		if (! colName.size()) throw runtime_error("empty column after processing");
@@ -89,6 +89,7 @@ string ColumnCondition::toString() const {
 }
 
 Request::Request(const ptree &pt, const Storage &storage) {
+	ptree::const_assoc_iterator it;
 	storage.checkReady();
 
 	indexName = pt.get<string>("index", "id");
@@ -97,13 +98,18 @@ Request::Request(const ptree &pt, const Storage &storage) {
 	string api = pt.get<string>("api_key");
 	APIKey = string(); for (size_t i=0; i<api.size() && APIKey.size()<=32; i++) if (isalnum(api[i])) APIKey += api[i];
 
+	mode = Mode::Default;
+	it = pt.find("mode"); if ( it != pt.not_found() ) {
+		string modeString = pt.get<string>("mode");
+		if (modeString == "count") mode = Mode::Count;
+	}
+
 	offset = pt.get<size_t>("offset", 0);
 	limit = pt.get<size_t>("limit", 10);
 	if (limit > 100) limit = 100;
 	const Table &tbl = storage.activeSlotConst().getTableByNameConst(tableName);
 
 	string name;
-	ptree::const_assoc_iterator it;
 	name = "where"; it = pt.find(name); if ( it != pt.not_found() ) {BOOST_FOREACH(const ptree::value_type &v, pt.get_child(name)) { filters.push_back( ColumnCondition(v, tbl, ColumnCondition::OperType::Compare) ); } }
 	name = "count"; it = pt.find(name); if ( it != pt.not_found() ) {BOOST_FOREACH(const ptree::value_type &v, pt.get_child(name)) { aggregates.push_back( ColumnCondition(v, tbl, ColumnCondition::OperType::Compare) ); } }
 	name = "min"; it = pt.find(name); if ( it != pt.not_found() ) {for (auto &v : pt.get_child(name)) { aggregates.push_back( ColumnCondition(v, tbl, ColumnCondition::OperType::Min) ); } }
@@ -192,28 +198,6 @@ size_t Table::getColumnIndexByName(const string& columnName) const {
 	throw runtime_error("getColumnIndexByName: column not found: "+columnName);
 }
 
-void Table::makeSQLQuery() {
-	sql = string("SELECT ") + select;
-	//for (vector <Column>::const_iterator i=columns.begin(); i!=columns.end(); i++) sql += (i != columns.begin() ? "," : "") + (i->getExpr() != i->getName() ? i->getExpr() + " AS " + i->escapeName() : i->escapeName());
-	sql += " FROM " + from;
-	if (where.size() > 0) sql += " WHERE " + where;
-	if (groupBy.size() > 0) sql += " GROUP BY " + groupBy;
-	if (limit > 0) sql += " LIMIT " + to_string(limit);
-}
-
-/*
-void Table::setSelect(const string& selString) {
-	vector <string> words;
-	boost::algorithm::split(words, colString,  ", " );
-	for (size_t i=0; i<words.size(); i++) {
-		string colStr = utils::trim(words[i]);
-		Column col(colStr);
-		appendColumn(col);
-	}
-
-	setColumnsCount(getColumnsCount());
-}*/
-
 void Table::addIndex(const string& indexName, const string& indexStr) {
 	indexStrings[indexName] = indexStr;
 }
@@ -262,7 +246,8 @@ int Table::query(const Request &req, Response &resp) const {
 	//boost::posix_time::ptime mst1 = boost::posix_time::microsec_clock::local_time();
 	size_t cols = getColumnsCount();
 	register size_t aggrInd, aggrNum, aggrSize = req.aggregates.size();
-	size_t filtersTotal = 0, filtersMatch;
+	size_t filtersTotal = 0;
+	register size_t filtersMatch;
 	resp.rowsMatch = 0;
 
 	vector < StatMap > intStats(aggrSize); // field => ( optionValue => count ) 
@@ -276,43 +261,49 @@ int Table::query(const Request &req, Response &resp) const {
 	map<string, vector<size_t> >::const_iterator indexIter = indexes.find(req.indexName);
 	if (indexIter == indexes.end()) throw runtime_error("Index not found: "+req.indexName);
 	const vector <size_t> & index = indexIter->second;
-	vector<size_t>::const_iterator iInd, iEnd = index.end();
-	register size_t row, failCol;
+	register vector<size_t>::const_iterator iInd, iEnd = index.end();
+	register size_t /*row, */failCol;
 	register ItemType val;
 	register vector<ColumnCondition>::const_iterator filtIter, filtBegin = req.filters.begin(), filtEnd = req.filters.end();
 
-	for (iInd = index.begin(); iInd != iEnd; iInd++) {
-		row = *iInd;
+	for (iInd = index.begin(); iInd != iEnd; ++iInd) {
+		//row = *iInd;
 
 		filtersMatch = 0;
-		for (filtIter = filtBegin; filtIter != filtEnd; filtIter++) {
-			val = getItem(row, filtIter->col);
-			if (filtIter->test(val)) filtersMatch++;
-			else failCol = filtIter->col;
+		for (filtIter = filtBegin; filtIter != filtEnd; ++filtIter) {
+			val = getItem(*iInd, filtIter->col);
+			if (filtIter->test(val)) {
+				++filtersMatch;
+			} else {
+				if (req.mode==Request::Mode::Count) break;
+				else failCol = filtIter->col;
+			}
 		}
 
 		if (filtersMatch == filtersTotal) {
-			for (aggrInd = 0; aggrInd < aggrSize; aggrInd++) {
-				register const ColumnCondition &condition = req.aggregates[ aggrInd ];
-				val = getItem(row, condition.col);
-				if (condition.oper == ColumnCondition::OperType::Min) {
-					if (val>0 && (minStats[condition.col]==ItemTypeNull || minStats[condition.col] > val)) minStats[condition.col] = val;
-				} else if (condition.oper == ColumnCondition::OperType::Max) {
-					if (val>0 && (maxStats[condition.col]==ItemTypeNull || maxStats[condition.col] < val)) maxStats[condition.col] = val;
-				} else {
-					if ( condition.test(val) ) intStats[ aggrInd ][ condition.base(val) ]++;
+			if (req.mode == Request::Mode::Default) {
+				for (aggrInd = 0; aggrInd < aggrSize; ++aggrInd) {
+					register const ColumnCondition &condition = req.aggregates[ aggrInd ];
+					val = getItem(*iInd, condition.col);
+					if (condition.oper == ColumnCondition::OperType::Min) {
+						if (val>0 && (minStats[condition.col]==ItemTypeNull || minStats[condition.col] > val)) minStats[condition.col] = val;
+					} else if (condition.oper == ColumnCondition::OperType::Max) {
+						if (val>0 && (maxStats[condition.col]==ItemTypeNull || maxStats[condition.col] < val)) maxStats[condition.col] = val;
+					} else {
+						if ( condition.test(val) ) intStats[ aggrInd ][ condition.base(val) ]++;
+					}
 				}
+
+				if (resp.rowsMatch >= req.offset && resp.rowsMatch < req.offset + req.limit) resp.ids.push_back( getItem(*iInd, 0) );
 			}
+			++resp.rowsMatch;
 
-			if (resp.rowsMatch >= req.offset && resp.rowsMatch < req.offset + req.limit) resp.ids.push_back( getItem(row, 0) );
-			resp.rowsMatch++;
-
-		} else if (filtersMatch + 1 == filtersTotal) {
+		} else if (req.mode==Request::Mode::Default && filtersMatch + 1 == filtersTotal) {
 			if (colAggregates[failCol].size() > 0) {
-				for (aggrNum = 0; aggrNum < colAggregates[failCol].size(); aggrNum++) {
+				for (aggrNum = 0; aggrNum < colAggregates[failCol].size(); ++aggrNum) {
 					aggrInd = colAggregates[failCol][aggrNum];
 					register const ColumnCondition &condition = req.aggregates[ aggrInd ];
-					val = getItem(row, condition.col );
+					val = getItem(*iInd, condition.col );
 					if (condition.oper == ColumnCondition::OperType::Min) {
 						if (val>0 && (minStats[condition.col]==ItemTypeNull || minStats[condition.col] > val)) minStats[condition.col] = val;
 					} else if (condition.oper == ColumnCondition::OperType::Max) {
@@ -348,7 +339,6 @@ int Table::query(const Request &req, Response &resp) const {
 
 void Table::update() {
 	log("Loading table '" + name + "' ... ");
-	makeSQLQuery();
 	log(string("  SQL query: '" + sql + "'"));
 
 	sql::ResultSet *res;
@@ -408,10 +398,7 @@ void Slot::initTables() {
 		const Setting &t = tbls[i];
 
 		Table & tbl = getTableByName( t.lookup("name" ) );
-		tbl.setFrom( t.exists("from") ? t.lookup("from") : string("`") + tbl.getName() + "`" );
-		tbl.setSelect( t.exists("select") ? t.lookup("select") : string("*") );
-		tbl.setWhere( t.lookup("where") );
-		if ( t.exists("groupby") ) tbl.setGroupBy( t.lookup("groupby") );
+		tbl.setSql( t.lookup("sql") );
 
 		const Setting &inds = t["indexes"];
 		for (int j=0; j<inds.getLength(); j++) {

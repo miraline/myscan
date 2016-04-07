@@ -5,7 +5,6 @@ CMakeScripts
 Makefile
 cmake_install.cmake
 install_manifest.txt
-myscan.cfg
 *.cmake
 #Additions to https://github.com/github/gitignore/blob/master/CMake.gitignore
 Testing
@@ -18,3 +17,4 @@ vendor
 test.sh
 out.log
 err.log
+myscan.cfg

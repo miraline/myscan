@@ -9,12 +9,10 @@ timeout_data = 30;
 
 tables = ( 
 	{
-		name = "user";
-		select = "user.*";
-		where = "user.state=1 AND is_agent=1";
-		groupby = "user.id";
+		name = "test";
+		sql = "SELECT * FROM test";
 		indexes = (
-			{ name = "updated"; columns = "tm_updated DESC"; }
+			{ name = "updated_asc"; columns = "updated_at ASC"; }, 
+			{ name = "updated_desc"; columns = "updated_at DESC"; }, 
 		);
-	}
-);
+	}, 

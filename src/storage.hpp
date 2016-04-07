@@ -91,6 +91,8 @@ struct ColumnCondition {
 };
 
 struct Request {
+	enum Mode { Default, Count };
+	Mode mode;
 	vector <ColumnCondition> filters, aggregates;
 	string indexName, tableName, APIKey;
 	size_t offset = 0, limit = 10;
@@ -124,10 +126,9 @@ class Table {
 		map <string, vector<size_t> > indexes;
 		size_t columnsCount = 0;
 		size_t rowsCount = 0;
-		string name, select, from, where, groupBy, sql;
+		string name, sql;
 		map <string, string> indexStrings;
 		vector <ColumnMeta> columns;
-		size_t limit = 0;
 		const Slot &slot;
 
 	public:
@@ -140,15 +141,6 @@ class Table {
 		size_t getColumnIndexByName(const string& columnName) const;
 
 		size_t getRowsCount() const {return rowsCount;}
-
-		void makeSQLQuery();
-
-		void setSelect(const string& s) { select = s; }
-		void setFrom(const string& s) { from = s; }
-		void setWhere(const string& s) { where = s; }
-		void setGroupBy(const string& s) { groupBy = s; }
-
-		void setColumns(const string& colStr);
 
 		void addIndex(const string& indexName, const string& indexStr);
 
@@ -169,6 +161,8 @@ class Table {
 		void onDataLoaded();
 
 		void update();
+
+		void setSql(const string &s) {sql = s;}
 
 	protected:
 		void setMetaData(sql::ResultSetMetaData *meta);
